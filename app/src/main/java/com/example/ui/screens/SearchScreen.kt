@@ -73,6 +73,7 @@ class SearchViewModel(
 
     private var searchJob: Job? = null
     private var suggestJob: Job? = null
+    private var searchRequestId = 0L
 
     val popularSearches = listOf(
         "Avengers", "Breaking Bad", "Spider-Man", "Interstellar", "Stranger Things", "Inception", "Anime"
@@ -80,34 +81,45 @@ class SearchViewModel(
 
     fun onQueryChange(newQuery: String) {
         _query.value = newQuery
-        if (newQuery.isBlank()) {
+        val trimmed = newQuery.trim()
+        if (trimmed.isBlank()) {
+            suggestJob?.cancel()
+            searchJob?.cancel()
             _suggestions.value = emptyList()
             _uiState.value = SearchUiState.Idle
             return
         }
 
-        // Fetch suggestions debounced
+        // Fetch suggestions debounced (150ms)
         suggestJob?.cancel()
         suggestJob = viewModelScope.launch {
             delay(150)
             try {
-                val list = repository.getSuggestions(newQuery.trim())
+                val list = repository.getSuggestions(trimmed)
                 _suggestions.value = list
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
         }
 
-        // Auto search on typing
+        // Debounced search (350ms) to avoid intermediate flicker while typing
         searchJob?.cancel()
+        val currentId = ++searchRequestId
         searchJob = viewModelScope.launch {
-            delay(300)
-            performSearch(newQuery.trim(), _subjectType.value)
+            delay(350)
+            executeSearch(trimmed, _subjectType.value, currentId)
         }
     }
 
     fun selectSubjectType(type: Int) {
         _subjectType.value = type
-        if (_query.value.isNotBlank()) {
-            performSearch(_query.value.trim(), type)
+        val trimmed = _query.value.trim()
+        if (trimmed.isNotBlank()) {
+            searchJob?.cancel()
+            val currentId = ++searchRequestId
+            searchJob = viewModelScope.launch {
+                executeSearch(trimmed, type, currentId)
+            }
         }
     }
 
@@ -117,7 +129,29 @@ class SearchViewModel(
         _query.value = trimmed
         _suggestions.value = emptyList()
         searchHistoryManager?.addSearch(trimmed)
-        performSearch(trimmed, _subjectType.value)
+
+        searchJob?.cancel()
+        val currentId = ++searchRequestId
+        searchJob = viewModelScope.launch {
+            executeSearch(trimmed, _subjectType.value, currentId)
+        }
+    }
+
+    private suspend fun executeSearch(keyword: String, type: Int, reqId: Long) {
+        if (reqId != searchRequestId) return
+        _uiState.value = SearchUiState.Loading
+        try {
+            val results = repository.search(keyword, page = 1, subjectType = type)
+            if (reqId == searchRequestId) {
+                _uiState.value = SearchUiState.Success(results)
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (reqId == searchRequestId) {
+                val fallbackResults = repository.searchLocalCatalog(keyword, type)
+                _uiState.value = SearchUiState.Success(fallbackResults)
+            }
+        }
     }
 
     fun removeRecentSearch(term: String) {
@@ -128,20 +162,9 @@ class SearchViewModel(
         searchHistoryManager?.clearAll()
     }
 
-    private fun performSearch(keyword: String, type: Int) {
-        searchJob?.cancel()
-        searchJob = viewModelScope.launch {
-            _uiState.value = SearchUiState.Loading
-            try {
-                val results = repository.search(keyword, page = 1, subjectType = type)
-                _uiState.value = SearchUiState.Success(results)
-            } catch (e: Exception) {
-                _uiState.value = SearchUiState.Error(e.localizedMessage ?: "Search failed")
-            }
-        }
-    }
-
     fun clearSearch() {
+        searchJob?.cancel()
+        suggestJob?.cancel()
         _query.value = ""
         _suggestions.value = emptyList()
         _uiState.value = SearchUiState.Idle
@@ -478,19 +501,50 @@ fun SearchScreen(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(horizontal = 24.dp)
+                            ) {
                                 Text(
-                                    text = "No titles found for \"$query\"",
+                                    text = "No matches found for \"$query\"",
                                     color = MaterialTheme.colorScheme.onBackground,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "Check the spelling or try a different filter",
+                                    text = "Try searching for one of these popular titles:",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodyMedium
                                 )
+                                Spacer(modifier = Modifier.height(14.dp))
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(vertical = 4.dp)
+                                ) {
+                                    items(viewModel.popularSearches) { pop ->
+                                        SuggestionChip(
+                                            onClick = {
+                                                focusManager.clearFocus()
+                                                viewModel.submitSearch(pop)
+                                            },
+                                            label = {
+                                                Text(
+                                                    text = pop,
+                                                    style = MaterialTheme.typography.labelMedium
+                                                )
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceContainer
+                                            ),
+                                            border = SuggestionChipDefaults.suggestionChipBorder(
+                                                enabled = true,
+                                                borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                            )
+                                        )
+                                    }
+                                }
                             }
                         }
                     } else {

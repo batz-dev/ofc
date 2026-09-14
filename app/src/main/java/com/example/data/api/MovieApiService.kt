@@ -241,32 +241,107 @@ class MovieApiService {
             put("subjectType", subjectType)
         }
 
-        val root = executeSignedRequest(
+        // 1. Try POST /wefeed-mobile-bff/subject-api/search
+        var root = executeSignedRequest(
             method = "POST",
             path = "/wefeed-mobile-bff/subject-api/search",
             bodyJson = bodyObj.toString()
-        ) ?: return emptyList()
+        )
 
-        val data = root.optJSONObject("data") ?: return emptyList()
-        val itemsArr = data.optJSONArray("items") ?: data.optJSONArray("list") ?: JSONArray()
+        // 2. Fallback to GET /wefeed-mobile-bff/subject-api/search if POST failed
+        if (root == null) {
+            val qParams = mutableMapOf(
+                "keyword" to keyword,
+                "page" to page.toString(),
+                "perPage" to safePerPage.toString()
+            )
+            if (subjectType != 0) {
+                qParams["subjectType"] = subjectType.toString()
+            }
+            root = executeSignedRequest(
+                method = "GET",
+                path = "/wefeed-mobile-bff/subject-api/search",
+                queryParams = qParams
+            )
+        }
+
+        if (root == null) return emptyList()
+
+        val dataObj = root.optJSONObject("data")
+        val itemsArr = dataObj?.optJSONArray("items")
+            ?: dataObj?.optJSONArray("subjects")
+            ?: dataObj?.optJSONArray("list")
+            ?: dataObj?.optJSONArray("results")
+            ?: dataObj?.optJSONArray("records")
+            ?: dataObj?.optJSONArray("subjectList")
+            ?: root.optJSONArray("data")
+            ?: root.optJSONArray("items")
+            ?: JSONArray()
+
         val result = mutableListOf<MediaItem>()
 
         for (i in 0 until itemsArr.length()) {
             val obj = itemsArr.optJSONObject(i) ?: continue
-            val sid = obj.optString("subjectId").ifEmpty { obj.optString("id") }
+            val sid = obj.optString("subjectId")
+                .ifEmpty { obj.optString("id") }
+                .ifEmpty { obj.optString("subject_id") }
             val title = obj.optString("title")
+                .ifEmpty { obj.optString("name") }
+                .ifEmpty { obj.optString("subjectName") }
+
             val cover = obj.optJSONObject("cover")?.optString("url")
                 ?: obj.optString("coverUrl")
-                ?: obj.optString("cover")
-            val sType = obj.optInt("subjectType", 1)
+                    .ifEmpty { obj.optString("cover") }
+                    .ifEmpty { obj.optString("poster") }
+                    .ifEmpty { obj.optString("posterUrl") }
+                    .ifEmpty { obj.optString("imageUrl") }
+
+            val sType = if (obj.has("subjectType")) {
+                obj.optInt("subjectType", 1)
+            } else if (obj.has("subject_type")) {
+                obj.optInt("subject_type", 1)
+            } else {
+                obj.optInt("type", 1)
+            }
+
             val score = if (obj.has("imdbRatingValue")) {
                 obj.optString("imdbRatingValue").toDoubleOrNull()
             } else if (obj.has("score")) {
                 obj.optDouble("score").takeIf { it > 0 }
+            } else if (obj.has("rating")) {
+                obj.optDouble("rating").takeIf { it > 0 }
             } else null
-            val releaseDate = obj.optString("releaseDate").ifEmpty { obj.optString("year") }
-            val genre = obj.optString("genre")
-            val desc = obj.optString("description").ifEmpty { obj.optString("desc") }
+
+            val releaseDate = obj.optString("releaseDate")
+                .ifEmpty { obj.optString("release_date") }
+                .ifEmpty { obj.optString("year") }
+                .ifEmpty { obj.optString("publishDate") }
+
+            val genre = if (obj.has("genres")) {
+                val gArr = obj.optJSONArray("genres")
+                if (gArr != null && gArr.length() > 0) {
+                    val gList = mutableListOf<String>()
+                    for (g in 0 until gArr.length()) {
+                        val gItem = gArr.opt(g)
+                        if (gItem is String && gItem.isNotEmpty()) gList.add(gItem)
+                        else if (gItem is JSONObject) {
+                            val gName = gItem.optString("name").ifEmpty { gItem.optString("title") }
+                            if (gName.isNotEmpty()) gList.add(gName)
+                        }
+                    }
+                    gList.joinToString(" • ")
+                } else {
+                    obj.optString("genre")
+                }
+            } else {
+                obj.optString("genre")
+            }
+
+            val desc = obj.optString("description")
+                .ifEmpty { obj.optString("desc") }
+                .ifEmpty { obj.optString("intro") }
+                .ifEmpty { obj.optString("summary") }
+                .ifEmpty { obj.optString("overview") }
 
             if (sid.isNotEmpty() && title.isNotEmpty()) {
                 result.add(
@@ -294,18 +369,27 @@ class MovieApiService {
             queryParams = mapOf("keyword" to keyword, "perPage" to "8")
         ) ?: return emptyList()
 
-        val data = root.optJSONObject("data") ?: return emptyList()
-        val itemsArr = data.optJSONArray("items") ?: data.optJSONArray("list") ?: JSONArray()
+        val data = root.optJSONObject("data")
+        val itemsArr = data?.optJSONArray("items")
+            ?: data?.optJSONArray("list")
+            ?: data?.optJSONArray("words")
+            ?: data?.optJSONArray("keywords")
+            ?: data?.optJSONArray("suggestions")
+            ?: root.optJSONArray("data")
+            ?: JSONArray()
+
         val list = mutableListOf<String>()
         for (i in 0 until itemsArr.length()) {
             val item = itemsArr.opt(i)
-            if (item is String) {
-                list.add(item)
+            if (item is String && item.isNotBlank()) {
+                list.add(item.trim())
             } else if (item is JSONObject) {
                 val title = item.optString("word")
                     .ifEmpty { item.optString("title") }
                     .ifEmpty { item.optString("keyword") }
-                if (title.isNotEmpty()) list.add(title)
+                    .ifEmpty { item.optString("name") }
+                    .ifEmpty { item.optString("query") }
+                if (title.isNotBlank()) list.add(title.trim())
             }
         }
         return list

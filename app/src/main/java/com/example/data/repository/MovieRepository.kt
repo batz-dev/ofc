@@ -249,53 +249,172 @@ class MovieRepository(
         return fallbackData
     }
 
-    suspend fun search(keyword: String, page: Int = 1, subjectType: Int = 0): List<MediaItem> {
-        val cleanQuery = keyword.trim().lowercase()
-        if (cleanQuery.isEmpty()) return emptyList()
+    // Query caching for instantaneous response and data conservation
+    private val searchCache = java.util.concurrent.ConcurrentHashMap<String, List<MediaItem>>()
 
-        // 1. Attempt remote API search with official parameters
+    suspend fun search(keyword: String, page: Int = 1, subjectType: Int = 0): List<MediaItem> {
+        val clean = keyword.trim()
+        if (clean.isEmpty()) return emptyList()
+
+        val cacheKey = "${clean.lowercase()}_${page}_${subjectType}"
+        val cached = searchCache[cacheKey]
+        if (cached != null && cached.isNotEmpty()) {
+            return cached
+        }
+
+        // 1. Attempt remote API search
+        var remoteResults: List<MediaItem> = emptyList()
         try {
-            val remoteResults = apiService.search(keyword.trim(), page, perPage = 20, subjectType = subjectType)
+            remoteResults = apiService.search(clean, page, perPage = 20, subjectType = subjectType)
             if (remoteResults.isNotEmpty()) {
                 remoteResults.forEach { mediaItemCache[it.id] = it }
+                searchCache[cacheKey] = remoteResults
                 return remoteResults
             }
         } catch (_: Exception) { }
 
-        // 2. Fallback to cached items only if offline or remote returned empty
-        val localMatches = mutableListOf<MediaItem>()
-        val allAvailable = mediaItemCache.values.distinctBy { it.id }
-        for (item in allAvailable) {
-            val matchesType = subjectType == 0 || item.subjectType == subjectType
-            val matchesQuery = item.title.lowercase().contains(cleanQuery) ||
-                    item.genre.lowercase().contains(cleanQuery) ||
-                    item.description.lowercase().contains(cleanQuery)
-            if (matchesType && matchesQuery) {
-                localMatches.add(item)
-            }
+        // If specific subjectType filter returned empty on remote, try unfiltered remote search
+        if (remoteResults.isEmpty() && subjectType != 0) {
+            try {
+                val broadRemote = apiService.search(clean, page, perPage = 20, subjectType = 0)
+                if (broadRemote.isNotEmpty()) {
+                    broadRemote.forEach { mediaItemCache[it.id] = it }
+                    val filtered = broadRemote.filter { it.subjectType == subjectType }
+                    val result = if (filtered.isNotEmpty()) filtered else broadRemote
+                    searchCache[cacheKey] = result
+                    return result
+                }
+            } catch (_: Exception) { }
+        }
+
+        // 2. Resilient Hybrid Fallback: Search local cache & built-in catalog with fuzzy matching
+        val localMatches = searchLocalCatalog(clean, subjectType)
+        if (localMatches.isNotEmpty()) {
+            searchCache[cacheKey] = localMatches
         }
         return localMatches
+    }
+
+    fun searchLocalCatalog(query: String, subjectType: Int = 0): List<MediaItem> {
+        val clean = query.trim().lowercase()
+        if (clean.isEmpty()) return emptyList()
+
+        // Normalize query: remove punctuation, extract keywords
+        val normalizedQuery = clean.replace(Regex("[^a-z0-9\\s]"), " ").replace(Regex("\\s+"), " ").trim()
+        val queryTokens = normalizedQuery.split(" ").filter { it.length >= 2 }
+        val compactQuery = clean.replace(Regex("[^a-z0-9]"), "")
+
+        val allAvailable = (mediaItemCache.values + CatalogData.builtInMediaList).distinctBy { it.id }
+
+        data class ScoredItem(val item: MediaItem, val score: Int)
+        val scoredList = mutableListOf<ScoredItem>()
+
+        for (item in allAvailable) {
+            // Apply subjectType filter if requested
+            if (subjectType != 0 && item.subjectType != subjectType) {
+                continue
+            }
+
+            val titleLower = item.title.lowercase()
+            val normalizedTitle = titleLower.replace(Regex("[^a-z0-9\\s]"), " ").replace(Regex("\\s+"), " ").trim()
+            val compactTitle = titleLower.replace(Regex("[^a-z0-9]"), "")
+            val genreLower = item.genre.lowercase()
+            val descLower = item.description.lowercase()
+
+            var score = 0
+
+            // 1. Exact or Prefix Title Matching
+            if (titleLower == clean || normalizedTitle == normalizedQuery) {
+                score += 1000
+            } else if (titleLower.startsWith(clean) || normalizedTitle.startsWith(normalizedQuery)) {
+                score += 600
+            } else if (titleLower.contains(clean) || normalizedTitle.contains(normalizedQuery)) {
+                score += 400
+            } else if (compactQuery.isNotEmpty() && compactTitle.contains(compactQuery)) {
+                // Matches "spiderman" with "spider-man" or "spider man"
+                score += 350
+            }
+
+            // 2. Token Matching (multi-word searches like "avengers endgame", "stranger things 4")
+            if (queryTokens.isNotEmpty()) {
+                var tokensInTitle = 0
+                var tokensInOther = 0
+
+                for (token in queryTokens) {
+                    if (normalizedTitle.contains(token) || compactTitle.contains(token)) {
+                        tokensInTitle++
+                    } else if (genreLower.contains(token) || descLower.contains(token)) {
+                        tokensInOther++
+                    }
+                }
+
+                if (tokensInTitle == queryTokens.size) {
+                    score += 300
+                } else {
+                    score += tokensInTitle * 60
+                }
+                score += tokensInOther * 20
+            }
+
+            // 3. Fallback partial description & genre search
+            if (score == 0) {
+                if (genreLower.contains(clean) || descLower.contains(clean)) {
+                    score += 50
+                }
+            }
+
+            if (score > 0) {
+                val ratingBonus = ((item.score ?: 7.0) * 2).toInt()
+                score += ratingBonus
+                scoredList.add(ScoredItem(item, score))
+            }
+        }
+
+        // If no matches found with strict filter, relax filter to ensure user never gets false empty state
+        if (scoredList.isEmpty() && subjectType != 0) {
+            return searchLocalCatalog(query, subjectType = 0)
+        }
+
+        return scoredList
+            .sortedByDescending { it.score }
+            .map { it.item }
     }
 
     suspend fun getSuggestions(keyword: String): List<String> {
         val clean = keyword.trim()
         if (clean.isEmpty()) return emptyList()
 
-        // 1. Query live search-suggest API
+        val results = mutableListOf<String>()
+
+        // 1. Live search-suggest API
         try {
             val remote = apiService.getSuggest(clean)
-            if (remote.isNotEmpty()) {
-                return remote.distinct().take(10)
-            }
+            results.addAll(remote)
         } catch (_: Exception) { }
 
-        // 2. Fallback to live cached items
-        val lower = clean.lowercase()
-        return mediaItemCache.values
+        // 2. Match local catalog titles
+        val lowerClean = clean.lowercase()
+        val compactClean = lowerClean.replace(Regex("[^a-z0-9]"), "")
+        val normalizedClean = lowerClean.replace(Regex("[^a-z0-9\\s]"), " ").trim()
+
+        val allItems = (mediaItemCache.values + CatalogData.builtInMediaList).distinctBy { it.id }
+        val matchingTitles = allItems
+            .filter { item ->
+                val titleLower = item.title.lowercase()
+                val compactTitle = titleLower.replace(Regex("[^a-z0-9]"), "")
+                titleLower.contains(lowerClean) ||
+                (compactClean.isNotEmpty() && compactTitle.contains(compactClean)) ||
+                (normalizedClean.isNotEmpty() && titleLower.contains(normalizedClean))
+            }
             .map { it.title }
-            .filter { it.lowercase().contains(lower) }
-            .distinct()
-            .take(6)
+
+        results.addAll(matchingTitles)
+
+        return results
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.lowercase() }
+            .take(8)
     }
 
     suspend fun getSubjectDetail(subjectId: String): MediaDetail? {
