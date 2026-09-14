@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Center rounded badge -->
+    <path
+        android:fillColor="#8B5CF6"
+        android:pathData="M54,26 C69.464,26 82,38.536 82,54 C82,69.464 69.464,82 54,82 C38.536,82 26,69.464 26,54 C26,38.536 38.536,26 54,26 Z" />
+    <!-- Gradient ring outline -->
+    <path
+        android:strokeColor="#A78BFA"
+        android:strokeWidth="2.5"
+        android:fillColor="#00000000"
+        android:pathData="M54,26 C69.464,26 82,38.536 82,54 C82,69.464 69.464,82 54,82 C38.536,82 26,69.464 26,54 C26,38.536 38.536,26 54,26 Z" />
+    <!-- Sleek Play Triangle in center -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,41 L67,54 L48,67 Z" />
+</vector>

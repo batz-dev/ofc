@@ -1,0 +1,8 @@
+{
+  "name": "Remix MovieStream",
+  "description": "Clean, sleek and minimal Material 3 movie and TV streaming app with adaptive dark mode, background downloads, and Material buffering loaders.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
