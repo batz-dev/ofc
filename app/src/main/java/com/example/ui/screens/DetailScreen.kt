@@ -43,6 +43,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import com.example.data.db.WatchlistEntity
+import com.example.data.download.DownloadStorageHelper
 import com.example.data.model.EpisodeInfo
 import com.example.data.model.MediaDetail
 import com.example.data.model.MediaItem
