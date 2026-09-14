@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.db.WatchHistoryEntity
 import com.example.data.model.BannerItem
+import com.example.data.model.CatalogData
 import com.example.data.model.MediaItem
 import com.example.ui.theme.*
 
