@@ -14,6 +14,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
@@ -77,7 +78,9 @@ class MovieApiService {
     ): JSONObject? {
         var token = getOrRefreshToken()
 
-        val queryString = queryParams?.entries?.joinToString("&") { "${it.key}=${it.value}" }
+        val queryString = queryParams?.entries?.joinToString("&") { 
+            "${URLEncoder.encode(it.key, "UTF-8")}=${URLEncoder.encode(it.value, "UTF-8")}" 
+        }
         val allHosts = listOf(MovieSigner.PRIMARY_BASE_URL) + MovieSigner.FALLBACK_URLS
 
         for (host in allHosts) {
@@ -260,7 +263,9 @@ class MovieApiService {
             put("keyword", keyword)
             put("page", page)
             put("perPage", safePerPage)
-            put("subjectType", subjectType)
+            if (subjectType != 0) {
+                put("subjectType", subjectType)
+            }
         }
 
         // 1. Try POST /wefeed-mobile-bff/subject-api/search
@@ -270,7 +275,7 @@ class MovieApiService {
             bodyJson = bodyObj.toString()
         )
 
-        // 2. Fallback to GET /wefeed-mobile-bff/subject-api/search if POST failed
+        // 2. Fallback to GET /wefeed-mobile-bff/subject-api/search
         if (root == null) {
             val qParams = mutableMapOf(
                 "keyword" to keyword,
@@ -303,13 +308,24 @@ class MovieApiService {
         val result = mutableListOf<MediaItem>()
 
         for (i in 0 until itemsArr.length()) {
-            val obj = itemsArr.optJSONObject(i) ?: continue
+            val raw = itemsArr.optJSONObject(i) ?: continue
+            val obj = raw.optJSONObject("subject")
+                ?: raw.optJSONObject("subjectInfo")
+                ?: raw.optJSONObject("item")
+                ?: raw.optJSONObject("media")
+                ?: raw
+
             val sid = obj.optString("subjectId")
                 .ifEmpty { obj.optString("id") }
                 .ifEmpty { obj.optString("subject_id") }
+                .ifEmpty { raw.optString("subjectId") }
+                .ifEmpty { raw.optString("id") }
+
             val title = obj.optString("title")
                 .ifEmpty { obj.optString("name") }
                 .ifEmpty { obj.optString("subjectName") }
+                .ifEmpty { raw.optString("title") }
+                .ifEmpty { raw.optString("name") }
 
             val cover = obj.optJSONObject("cover")?.optString("url")
                 ?: obj.optString("coverUrl")
@@ -317,11 +333,15 @@ class MovieApiService {
                     .ifEmpty { obj.optString("poster") }
                     .ifEmpty { obj.optString("posterUrl") }
                     .ifEmpty { obj.optString("imageUrl") }
+                    .ifEmpty { raw.optJSONObject("cover")?.optString("url") ?: "" }
+                    .ifEmpty { raw.optString("coverUrl") }
 
             val sType = if (obj.has("subjectType")) {
                 obj.optInt("subjectType", 1)
             } else if (obj.has("subject_type")) {
                 obj.optInt("subject_type", 1)
+            } else if (raw.has("subjectType")) {
+                raw.optInt("subjectType", 1)
             } else {
                 obj.optInt("type", 1)
             }
@@ -332,12 +352,15 @@ class MovieApiService {
                 obj.optDouble("score").takeIf { it > 0 }
             } else if (obj.has("rating")) {
                 obj.optDouble("rating").takeIf { it > 0 }
+            } else if (raw.has("score")) {
+                raw.optDouble("score").takeIf { it > 0 }
             } else null
 
             val releaseDate = obj.optString("releaseDate")
                 .ifEmpty { obj.optString("release_date") }
                 .ifEmpty { obj.optString("year") }
                 .ifEmpty { obj.optString("publishDate") }
+                .ifEmpty { raw.optString("releaseDate") }
 
             val genre = if (obj.has("genres")) {
                 val gArr = obj.optJSONArray("genres")
@@ -356,7 +379,7 @@ class MovieApiService {
                     obj.optString("genre")
                 }
             } else {
-                obj.optString("genre")
+                obj.optString("genre").ifEmpty { raw.optString("genre") }
             }
 
             val desc = obj.optString("description")
@@ -364,6 +387,7 @@ class MovieApiService {
                 .ifEmpty { obj.optString("intro") }
                 .ifEmpty { obj.optString("summary") }
                 .ifEmpty { obj.optString("overview") }
+                .ifEmpty { raw.optString("description") }
 
             if (sid.isNotEmpty() && title.isNotEmpty()) {
                 result.add(

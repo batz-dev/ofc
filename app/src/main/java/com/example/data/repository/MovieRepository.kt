@@ -14,7 +14,8 @@ class MovieRepository(
     private val apiService: MovieApiService,
     private val watchHistoryDao: WatchHistoryDao,
     private val watchlistDao: WatchlistDao,
-    private val downloadDao: DownloadDao
+    private val downloadDao: DownloadDao,
+    private val context: Context? = null
 ) {
     val watchHistory: Flow<List<WatchHistoryEntity>> = watchHistoryDao.getAllHistory()
     val watchlist: Flow<List<WatchlistEntity>> = watchlistDao.getAllWatchlist()
@@ -194,10 +195,24 @@ class MovieRepository(
     private val homeFeedCache = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, HomeData>>()
     private val feedCacheTtlMs = 15 * 60 * 1000L // 15 min cache for data saving
 
+    private val homeFeedCacheManager = context?.let { HomeFeedCacheManager(it) }
+
     init {
         // Pre-populate cache with built-in catalog
         for (item in CatalogData.builtInMediaList) {
             mediaItemCache[item.id] = item
+        }
+        // Pre-warm memory cache with persistent disk feeds for instant cold-start
+        homeFeedCacheManager?.let { mgr ->
+            for (tab in 0..3) {
+                val diskData = mgr.loadHomeFeed(tab)
+                if (diskData != null && (diskData.banners.isNotEmpty() || diskData.sections.isNotEmpty())) {
+                    homeFeedCache[tab] = Pair(System.currentTimeMillis(), diskData)
+                    diskData.sections.forEach { sec ->
+                        sec.items.forEach { item -> mediaItemCache[item.id] = item }
+                    }
+                }
+            }
         }
     }
 
@@ -212,19 +227,36 @@ class MovieRepository(
             if (cached != null && (now - cached.first) < feedCacheTtlMs) {
                 return cached.second
             }
+            // Check persistent disk cache for immediate offline or cold start return
+            val diskData = homeFeedCacheManager?.loadHomeFeed(tabId)
+            if (diskData != null && (diskData.banners.isNotEmpty() || diskData.sections.isNotEmpty())) {
+                homeFeedCache[tabId] = Pair(now, diskData)
+                diskData.sections.forEach { sec ->
+                    sec.items.forEach { item -> mediaItemCache[item.id] = item }
+                }
+                return diskData
+            }
         }
 
         try {
             val remote = apiService.getHomeFeed(tabId)
             if (remote.sections.isNotEmpty() || remote.banners.isNotEmpty()) {
-                // Cache items in memory
+                // Cache items in memory and persistent disk
                 remote.sections.forEach { sec ->
                     sec.items.forEach { item -> mediaItemCache[item.id] = item }
                 }
                 homeFeedCache[tabId] = Pair(now, remote)
+                homeFeedCacheManager?.saveHomeFeed(tabId, remote)
                 return remote
             }
         } catch (_: Exception) { }
+
+        // If remote failed (e.g. offline), try disk cache first
+        val diskData = homeFeedCacheManager?.loadHomeFeed(tabId)
+        if (diskData != null && (diskData.banners.isNotEmpty() || diskData.sections.isNotEmpty())) {
+            homeFeedCache[tabId] = Pair(now, diskData)
+            return diskData
+        }
 
         // Fallback to rich built-in catalog filtered by tab
         val filtered = when (tabId) {

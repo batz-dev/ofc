@@ -14,6 +14,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -66,6 +68,55 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import java.io.File
+
+data class AvailableAudioTrack(
+    val groupIndex: Int,
+    val trackIndex: Int,
+    val mediaTrackGroup: androidx.media3.common.TrackGroup,
+    val language: String?,
+    val label: String?,
+    val displayName: String,
+    val isSelected: Boolean
+)
+
+fun formatAudioTrackName(language: String?, label: String?, index: Int, channelCount: Int): String {
+    val langName = if (!language.isNullOrBlank() && language != "und") {
+        when (language.lowercase()) {
+            "hi", "hin" -> "Hindi (हिन्दी)"
+            "en", "eng" -> "English"
+            "es", "spa" -> "Spanish (Español)"
+            "fr", "fra", "fre" -> "French (Français)"
+            "de", "deu", "ger" -> "German (Deutsch)"
+            "ja", "jpn" -> "Japanese (日本語)"
+            "ko", "kor" -> "Korean (한국어)"
+            "zh", "zho", "chi" -> "Chinese (中文)"
+            "ta", "tam" -> "Tamil (தமிழ்)"
+            "te", "tel" -> "Telugu (తెలుగు)"
+            "pt", "por" -> "Portuguese (Português)"
+            "ru", "rus" -> "Russian (Русский)"
+            "ar", "ara" -> "Arabic (العربية)"
+            "it", "ita" -> "Italian (Italiano)"
+            else -> {
+                val locale = java.util.Locale.forLanguageTag(language)
+                val display = locale.getDisplayLanguage(java.util.Locale.ENGLISH)
+                if (display.isNotBlank() && display != language) display else language.uppercase()
+            }
+        }
+    } else ""
+
+    val labelClean = label?.trim() ?: ""
+    val channelInfo = if (channelCount >= 6) "5.1 Surround" else if (channelCount == 2) "Stereo" else ""
+
+    return when {
+        labelClean.isNotEmpty() && langName.isNotEmpty() && !labelClean.contains(langName, ignoreCase = true) ->
+            "$langName - $labelClean"
+        labelClean.isNotEmpty() -> labelClean
+        langName.isNotEmpty() && channelInfo.isNotEmpty() -> "$langName ($channelInfo)"
+        langName.isNotEmpty() -> langName
+        channelInfo.isNotEmpty() -> "Audio Track ${index + 1} ($channelInfo)"
+        else -> "Audio Track ${index + 1}"
+    }
+}
 
 sealed interface PlayerUiState {
     object Loading : PlayerUiState
@@ -320,6 +371,7 @@ fun PlayerScreen(
     var currentAudioTrack by remember(resolvedAudio) {
         mutableStateOf(if (resolvedAudio.isNotEmpty()) resolvedAudio else "English (Original)")
     }
+    var availableAudioTracks by remember { mutableStateOf<List<AvailableAudioTrack>>(emptyList()) }
     var currentLoadedUri by remember { mutableStateOf<String?>(null) }
 
     // Always rotate player into landscape
@@ -338,6 +390,20 @@ fun PlayerScreen(
         ExoPlayer.Builder(context, renderersFactory).build().apply {
             playWhenReady = true
         }
+    }
+
+    // Explicit audio track switcher using TrackSelectionOverride
+    fun selectAudioTrack(track: AvailableAudioTrack) {
+        val builder = exoPlayer.trackSelectionParameters.buildUpon()
+        builder.clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+        builder.setOverrideForType(TrackSelectionOverride(track.mediaTrackGroup, track.trackIndex))
+        if (!track.language.isNullOrEmpty() && track.language != "und") {
+            builder.setPreferredAudioLanguage(track.language)
+        }
+        builder.setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+        exoPlayer.trackSelectionParameters = builder.build()
+        currentAudioTrack = track.displayName
+        viewModel.setAudioTrack(track.displayName)
     }
 
     // Configure video resolution on ExoPlayer
@@ -372,7 +438,23 @@ fun PlayerScreen(
 
     // Configure audio track language on ExoPlayer
     fun applyAudioLanguage(trackName: String) {
+        if (trackName.isBlank()) return
         val lower = trackName.lowercase()
+
+        // Match against dynamic tracks if available
+        val matchedTrack = availableAudioTracks.find { track ->
+            val tName = track.displayName.lowercase()
+            val tLang = (track.language ?: "").lowercase()
+            val tLabel = (track.label ?: "").lowercase()
+            tName.contains(lower) || lower.contains(tName) ||
+            tLang.contains(lower) || lower.contains(tLang) ||
+            tLabel.contains(lower) || lower.contains(tLabel)
+        }
+        if (matchedTrack != null) {
+            selectAudioTrack(matchedTrack)
+            return
+        }
+
         val langCodes = when {
             lower.contains("hindi") || lower.contains("हिन्दी") -> listOf("hi", "hin", "hindi")
             lower.contains("spanish") || lower.contains("español") -> listOf("es", "spa", "spanish")
@@ -455,7 +537,38 @@ fun PlayerScreen(
             }
 
             override fun onTracksChanged(tracks: Tracks) {
-                applyAudioLanguage(currentAudioTrack)
+                val audioList = mutableListOf<AvailableAudioTrack>()
+                var gIdx = 0
+                for (group in tracks.groups) {
+                    if (group.type == C.TRACK_TYPE_AUDIO) {
+                        for (tIdx in 0 until group.length) {
+                            val format = group.getTrackFormat(tIdx)
+                            val isSelected = group.isTrackSelected(tIdx)
+                            val name = formatAudioTrackName(format.language, format.label, audioList.size, format.channelCount)
+                            audioList.add(
+                                AvailableAudioTrack(
+                                    groupIndex = gIdx,
+                                    trackIndex = tIdx,
+                                    mediaTrackGroup = group.mediaTrackGroup,
+                                    language = format.language,
+                                    label = format.label,
+                                    displayName = name,
+                                    isSelected = isSelected
+                                )
+                            )
+                        }
+                    }
+                    gIdx++
+                }
+                availableAudioTracks = audioList
+
+                val activeTrack = audioList.find { it.isSelected }
+                if (activeTrack != null) {
+                    currentAudioTrack = activeTrack.displayName
+                } else if (currentAudioTrack.isNotEmpty()) {
+                    applyAudioLanguage(currentAudioTrack)
+                }
+
                 val readyState = uiState as? PlayerUiState.Ready
                 if (readyState != null) {
                     applyVideoQuality(readyState.currentStream.resolution)
@@ -939,7 +1052,7 @@ fun PlayerScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = if (state.isOffline) "Offline Audio Track" else "Change Audio Track",
+                                    text = if (state.isOffline) "Offline Audio Track" else if (availableAudioTracks.isNotEmpty()) "Audio Tracks (${availableAudioTracks.size})" else "Audio Track",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     fontWeight = FontWeight.Bold
@@ -989,20 +1102,26 @@ fun PlayerScreen(
                                         modifier = Modifier.padding(horizontal = 2.dp)
                                     )
                                 }
+                            } else if (availableAudioTracks.isEmpty()) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        "Default Stream Audio (1 Track Available)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             } else {
-                                val languages = listOf(
-                                    "English (Original)" to "en",
-                                    "Spanish (Español)" to "es",
-                                    "French (Français)" to "fr",
-                                    "Hindi (हिन्दी)" to "hi",
-                                    "German (Deutsch)" to "de",
-                                    "Japanese (日本語)" to "ja",
-                                    "Default Stream Audio" to ""
-                                )
-
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    languages.forEach { (label, code) ->
-                                        val isSelected = currentAudioTrack == label
+                                LazyColumn(
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 280.dp)
+                                ) {
+                                    items(availableAudioTracks) { track ->
+                                        val isSelected = track.isSelected || currentAudioTrack == track.displayName
                                         Surface(
                                             shape = RoundedCornerShape(12.dp),
                                             color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
@@ -1014,12 +1133,10 @@ fun PlayerScreen(
                                                 .fillMaxWidth()
                                                 .clip(RoundedCornerShape(12.dp))
                                                 .clickable {
-                                                    currentAudioTrack = label
-                                                    viewModel.setAudioTrack(label)
+                                                    selectAudioTrack(track)
                                                     isAudioSheetVisible = false
-                                                    applyAudioLanguage(label)
                                                 }
-                                                .testTag("audio_track_$label")
+                                                .testTag("audio_track_${track.displayName}")
                                         ) {
                                             Row(
                                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -1027,7 +1144,7 @@ fun PlayerScreen(
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Text(
-                                                    text = label,
+                                                    text = track.displayName,
                                                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                                                     style = MaterialTheme.typography.bodyMedium,
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal

@@ -53,7 +53,8 @@ class MainActivity : ComponentActivity() {
             apiService = apiService,
             watchHistoryDao = database.watchHistoryDao(),
             watchlistDao = database.watchlistDao(),
-            downloadDao = database.downloadDao()
+            downloadDao = database.downloadDao(),
+            context = applicationContext
         )
 
         setContent {

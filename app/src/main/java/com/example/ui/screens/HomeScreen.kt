@@ -40,7 +40,6 @@ import com.example.data.model.MediaItem
 import com.example.data.repository.MovieRepository
 import com.example.ui.components.ContinueWatchingCard
 import com.example.ui.components.HeroBannerCarousel
-import com.example.ui.components.HomeScreenSkeleton
 import com.example.ui.components.MediaCard
 import com.example.ui.theme.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -331,7 +330,16 @@ fun HomeScreen(
         ) {
             when (val state = uiState) {
                 is HomeUiState.Loading -> {
-                    HomeScreenSkeleton()
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(36.dp),
+                            strokeWidth = 3.dp
+                        )
+                    }
                 }
 
                 is HomeUiState.Error -> {

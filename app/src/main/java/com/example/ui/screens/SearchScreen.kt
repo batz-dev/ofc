@@ -37,7 +37,6 @@ import com.example.data.model.MediaItem
 import com.example.data.repository.MovieRepository
 import com.example.data.repository.SearchHistoryManager
 import com.example.ui.components.MediaCard
-import com.example.ui.components.SearchScreenSkeleton
 import com.example.ui.theme.*
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -479,7 +478,16 @@ fun SearchScreen(
                 }
 
                 is SearchUiState.Loading -> {
-                    SearchScreenSkeleton()
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(36.dp),
+                            strokeWidth = 3.dp
+                        )
+                    }
                 }
 
                 is SearchUiState.Error -> {

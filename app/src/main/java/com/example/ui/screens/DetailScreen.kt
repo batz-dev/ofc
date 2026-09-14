@@ -49,7 +49,6 @@ import com.example.data.model.MediaDetail
 import com.example.data.model.MediaItem
 import com.example.data.model.SeasonInfo
 import com.example.data.repository.MovieRepository
-import com.example.ui.components.DetailScreenSkeleton
 import com.example.ui.components.DownloadOptionsDialog
 import com.example.ui.components.EpisodeDownloadItem
 import com.example.ui.components.MediaCard
@@ -380,7 +379,16 @@ fun DetailScreen(
         ) {
             when (val state = uiState) {
                 is DetailUiState.Loading -> {
-                    DetailScreenSkeleton()
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(40.dp),
+                            strokeWidth = 3.dp
+                        )
+                    }
                 }
 
                 is DetailUiState.Error -> {
