@@ -67,7 +67,7 @@ fun MediaCard(
         ) {
             // Poster Image
             AsyncImage(
-                model = item.coverUrl,
+                model = ImageHelper.getCompressedUrl(item.coverUrl),
                 contentDescription = "${item.title} poster",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -205,7 +205,7 @@ fun ContinueWatchingCard(
                 )
         ) {
             AsyncImage(
-                model = item.coverUrl,
+                model = ImageHelper.getCompressedUrl(item.coverUrl, isBackdrop = true),
                 contentDescription = "${item.title} preview",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -313,7 +313,7 @@ fun HeroBannerCarousel(
             val banner = banners[page]
             Box(modifier = Modifier.fillMaxSize()) {
                 AsyncImage(
-                    model = banner.imageUrl,
+                    model = ImageHelper.getCompressedUrl(banner.imageUrl, isBackdrop = true),
                     contentDescription = banner.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()

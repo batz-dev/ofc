@@ -345,8 +345,8 @@ class MovieDownloadManager(
 
         val isSeries = (entity.se > 0 || entity.ep > 0)
         val baselineTotal = when {
-            calculatedTrackTotalBytes > 10_000_000L -> calculatedTrackTotalBytes
             entity.totalBytes > 0L -> entity.totalBytes
+            calculatedTrackTotalBytes > 10_000_000L -> calculatedTrackTotalBytes
             else -> DownloadStorageHelper.getEstimatedSizeBytes(entity.quality, isSeries = isSeries)
         }
 
@@ -356,7 +356,7 @@ class MovieDownloadManager(
                 totalBytesDownloaded = bytesDownloaded
                 reportedContentLength = contentLength
                 val now = System.currentTimeMillis()
-                val safeTotal = maxOf(if (contentLength > 0) contentLength else baselineTotal, bytesDownloaded)
+                val safeTotal = maxOf(baselineTotal, bytesDownloaded)
                 val percent = if (safeTotal > 0) {
                     ((bytesDownloaded * 100) / safeTotal).toInt().coerceIn(0, 99)
                 } else percentDownloaded.toInt().coerceIn(0, 99)
@@ -398,7 +398,7 @@ class MovieDownloadManager(
             targetFile.writeText("dash:$mpdUrl")
 
             _downloadSpeeds.value = _downloadSpeeds.value - entity.id
-            val finalBytes = if (totalBytesDownloaded > 0) totalBytesDownloaded else reportedContentLength.coerceAtLeast(10_000_000L)
+            val finalBytes = if (totalBytesDownloaded > 0) totalBytesDownloaded else if (entity.totalBytes > 0) entity.totalBytes else baselineTotal
             downloadDao.updateProgress(
                 id = entity.id,
                 progress = 100,

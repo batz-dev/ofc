@@ -50,12 +50,13 @@ class MovieRepository(
                 emptyList()
             }
             val requestedRes = quality.replace("p", "", ignoreCase = true).toIntOrNull() ?: 1080
-            // Prioritize direct playable MP4 file for reliable offline storage
-            val directMatch = streams.find { !it.isDash && it.directUrl.isNotEmpty() && it.resolution == requestedRes }
-                ?: streams.find { !it.isDash && it.directUrl.isNotEmpty() }
-            val matchedStream = directMatch
+            // Prioritize exact resolution match first
+            val exactDirectMatch = streams.find { !it.isDash && it.directUrl.isNotEmpty() && it.resolution == requestedRes }
+            val exactDashMatch = streams.find { it.isDash && it.mpdUrl.isNotEmpty() && it.resolution == requestedRes }
+            val matchedStream = exactDirectMatch
+                ?: exactDashMatch
                 ?: streams.find { it.resolution == requestedRes }
-                ?: streams.find { it.isDash && it.mpdUrl.isNotEmpty() }
+                ?: streams.minByOrNull { kotlin.math.abs(it.resolution - requestedRes) }
                 ?: streams.firstOrNull()
 
             if (matchedStream != null) {
@@ -74,6 +75,7 @@ class MovieRepository(
 
             if (resolvedDownloadUrl.isEmpty()) {
                 val fallbackStream = CatalogData.sampleStreams.find { it.resolution == requestedRes }
+                    ?: CatalogData.sampleStreams.minByOrNull { kotlin.math.abs(it.resolution - requestedRes) }
                     ?: CatalogData.sampleStreams.firstOrNull()
                 if (fallbackStream != null) {
                     resolvedDownloadUrl = fallbackStream.directUrl
@@ -82,6 +84,11 @@ class MovieRepository(
                     }
                 }
             }
+        }
+
+        if (resolvedSizeBytes <= 0L) {
+            val isSeries = (se > 0 || ep > 0)
+            resolvedSizeBytes = com.example.data.download.DownloadStorageHelper.getEstimatedSizeBytes(quality, isSeries = isSeries)
         }
 
         downloadManager.enqueueDownload(

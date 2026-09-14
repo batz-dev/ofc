@@ -249,7 +249,7 @@ fun LibraryScreen(
                                             .border(BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(8.dp))
                                     ) {
                                         AsyncImage(
-                                            model = item.coverUrl,
+                                            model = com.example.ui.components.ImageHelper.getCompressedUrl(item.coverUrl),
                                             contentDescription = "${item.title} poster",
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()

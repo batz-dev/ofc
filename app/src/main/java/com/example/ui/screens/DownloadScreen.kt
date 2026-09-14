@@ -414,7 +414,7 @@ fun SeriesMainCard(
                     .border(BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(10.dp))
             ) {
                 AsyncImage(
-                    model = group.coverUrl,
+                    model = com.example.ui.components.ImageHelper.getCompressedUrl(group.coverUrl),
                     contentDescription = "${group.title} poster",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -634,7 +634,7 @@ fun SeriesDetailDownloadScreen(
                                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             ) {
                                 AsyncImage(
-                                    model = seriesGroup.coverUrl,
+                                    model = com.example.ui.components.ImageHelper.getCompressedUrl(seriesGroup.coverUrl),
                                     contentDescription = seriesGroup.title,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
@@ -776,7 +776,7 @@ private fun SeriesEpisodeRow(
                         .border(BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(8.dp))
                 ) {
                     AsyncImage(
-                        model = item.coverUrl.ifEmpty { seriesCoverUrl },
+                        model = com.example.ui.components.ImageHelper.getCompressedUrl(item.coverUrl.ifEmpty { seriesCoverUrl }),
                         contentDescription = "Episode ${item.ep}",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
@@ -1025,7 +1025,7 @@ fun DownloadItemCard(
                         .border(BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(8.dp))
                 ) {
                     AsyncImage(
-                        model = item.coverUrl,
+                        model = com.example.ui.components.ImageHelper.getCompressedUrl(item.coverUrl),
                         contentDescription = "${item.title} poster",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()

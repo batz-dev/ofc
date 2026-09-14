@@ -243,9 +243,15 @@ class DetailViewModel(
     ) {
         val currentStreams = (_uiState.value as? DetailUiState.Success)?.streams ?: emptyList()
         val resInt = quality.replace("p", "", ignoreCase = true).replace("k", "000", ignoreCase = true).toIntOrNull() ?: 1080
+        val isSeries = detail.subjectType == 2
         val matchedStream = currentStreams.find { it.resolution == resInt && it.sizeBytes > 0L }
             ?: currentStreams.find { it.sizeBytes > 0L && "${it.resolution}p".equals(quality, ignoreCase = true) }
-        val knownSize = matchedStream?.sizeBytes ?: 0L
+            ?: currentStreams.minByOrNull { kotlin.math.abs(it.resolution - resInt) }
+        val knownSize = if (matchedStream != null && matchedStream.sizeBytes > 0L) {
+            matchedStream.sizeBytes
+        } else {
+            DownloadStorageHelper.getEstimatedSizeBytes(quality, isSeries = isSeries)
+        }
 
         viewModelScope.launch {
             episodes.forEach { epItem ->
@@ -421,7 +427,7 @@ fun DetailScreen(
                                     .height(340.dp)
                             ) {
                                 AsyncImage(
-                                    model = detail.backdropUrl.ifEmpty { detail.coverUrl },
+                                    model = com.example.ui.components.ImageHelper.getCompressedUrl(detail.backdropUrl.ifEmpty { detail.coverUrl }, isBackdrop = true),
                                     contentDescription = "${detail.title} backdrop",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()

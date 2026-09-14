@@ -180,7 +180,7 @@ fun DownloadOptionsDialog(
                         .background(MaterialTheme.colorScheme.surfaceContainer)
                 ) {
                     AsyncImage(
-                        model = coverUrl,
+                        model = ImageHelper.getCompressedUrl(coverUrl),
                         contentDescription = "$title cover",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()

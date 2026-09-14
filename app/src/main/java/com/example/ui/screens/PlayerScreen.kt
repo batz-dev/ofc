@@ -292,6 +292,10 @@ class PlayerViewModel(
     }
 }
 
+import androidx.media3.common.C
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
+
 @OptIn(UnstableApi::class)
 @Composable
 fun PlayerScreen(
@@ -313,6 +317,7 @@ fun PlayerScreen(
     var currentAudioTrack by remember(resolvedAudio) {
         mutableStateOf(if (resolvedAudio.isNotEmpty()) resolvedAudio else "English (Original)")
     }
+    var currentLoadedUri by remember { mutableStateOf<String?>(null) }
 
     // Always rotate player into landscape
     DisposableEffect(Unit) {
@@ -332,21 +337,73 @@ fun PlayerScreen(
         }
     }
 
+    // Configure video resolution on ExoPlayer
+    fun applyVideoQuality(resolution: Int) {
+        val maxW = when (resolution) {
+            2160 -> 3840
+            1440 -> 2560
+            1080 -> 1920
+            720 -> 1280
+            480 -> 854
+            360 -> 640
+            else -> 1920
+        }
+        val builder = exoPlayer.trackSelectionParameters.buildUpon()
+            .setMaxVideoSize(maxW, resolution)
+            .setMinVideoSize(0, 0)
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+
+        for (group in exoPlayer.currentTracks.groups) {
+            if (group.type == C.TRACK_TYPE_VIDEO) {
+                for (i in 0 until group.length) {
+                    val format = group.getTrackFormat(i)
+                    if (format.height == resolution || (resolution >= 2160 && format.height >= 2160)) {
+                        builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i))
+                        break
+                    }
+                }
+            }
+        }
+        exoPlayer.trackSelectionParameters = builder.build()
+    }
+
     // Configure audio track language on ExoPlayer
     fun applyAudioLanguage(trackName: String) {
-        val langCode = when {
-            trackName.contains("hindi", ignoreCase = true) || trackName.contains("हिन्दी") -> "hi"
-            trackName.contains("spanish", ignoreCase = true) || trackName.contains("español", ignoreCase = true) -> "es"
-            trackName.contains("french", ignoreCase = true) || trackName.contains("français", ignoreCase = true) -> "fr"
-            trackName.contains("german", ignoreCase = true) || trackName.contains("deutsch", ignoreCase = true) -> "de"
-            trackName.contains("japanese", ignoreCase = true) || trackName.contains("日本語", ignoreCase = true) -> "ja"
-            trackName.contains("english", ignoreCase = true) -> "en"
-            else -> null
+        val langCodes = when {
+            trackName.contains("hindi", ignoreCase = true) || trackName.contains("हिन्दी") -> listOf("hi", "hin", "hindi")
+            trackName.contains("spanish", ignoreCase = true) || trackName.contains("español", ignoreCase = true) -> listOf("es", "spa", "spanish")
+            trackName.contains("french", ignoreCase = true) || trackName.contains("français", ignoreCase = true) -> listOf("fr", "fra", "fre", "french")
+            trackName.contains("german", ignoreCase = true) || trackName.contains("deutsch", ignoreCase = true) -> listOf("de", "deu", "ger", "german")
+            trackName.contains("japanese", ignoreCase = true) || trackName.contains("日本語", ignoreCase = true) -> listOf("ja", "jpn", "japanese")
+            trackName.contains("english", ignoreCase = true) -> listOf("en", "eng", "english")
+            else -> emptyList()
         }
-        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-            .buildUpon()
-            .setPreferredAudioLanguage(langCode)
-            .build()
+        val builder = exoPlayer.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+
+        if (langCodes.isNotEmpty()) {
+            builder.setPreferredAudioLanguages(*langCodes.toTypedArray())
+        } else {
+            builder.setPreferredAudioLanguages()
+        }
+
+        for (group in exoPlayer.currentTracks.groups) {
+            if (group.type == C.TRACK_TYPE_AUDIO) {
+                for (i in 0 until group.length) {
+                    val format = group.getTrackFormat(i)
+                    val lang = (format.language ?: "").lowercase()
+                    val label = (format.label ?: "").lowercase()
+                    val matches = langCodes.any { code ->
+                        lang == code || lang.startsWith(code) || label.contains(code)
+                    }
+                    if (matches) {
+                        builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i))
+                        break
+                    }
+                }
+            }
+        }
+        exoPlayer.trackSelectionParameters = builder.build()
     }
 
     LaunchedEffect(currentAudioTrack) {
@@ -371,7 +428,7 @@ fun PlayerScreen(
         }
     }
 
-    // Cleanup on dispose
+    // Cleanup and listeners on dispose
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -383,6 +440,14 @@ fun PlayerScreen(
 
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
+            }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                applyAudioLanguage(currentAudioTrack)
+                val readyState = uiState as? PlayerUiState.Ready
+                if (readyState != null) {
+                    applyVideoQuality(readyState.currentStream.resolution)
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -416,14 +481,17 @@ fun PlayerScreen(
         val stream = readyState.currentStream
 
         if (readyState.isOffline && stream.directUrl.isNotEmpty() && !stream.isDash) {
-            val localUri = Uri.fromFile(File(stream.directUrl))
-            val mediaItem = ExoMediaItem.fromUri(localUri)
-            exoPlayer.setMediaItem(mediaItem)
-            exoPlayer.prepare()
-            if (readyState.resumePositionMs > 0L) {
-                exoPlayer.seekTo(readyState.resumePositionMs)
+            if (currentLoadedUri != stream.directUrl) {
+                currentLoadedUri = stream.directUrl
+                val localUri = Uri.fromFile(File(stream.directUrl))
+                val mediaItem = ExoMediaItem.fromUri(localUri)
+                exoPlayer.setMediaItem(mediaItem)
+                exoPlayer.prepare()
+                if (readyState.resumePositionMs > 0L) {
+                    exoPlayer.seekTo(readyState.resumePositionMs)
+                }
+                exoPlayer.play()
             }
-            exoPlayer.play()
             return@LaunchedEffect
         }
 
@@ -449,25 +517,31 @@ fun PlayerScreen(
             .setUpstreamDataSourceFactory(httpDataSourceFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
-        val mediaSource = if (stream.isDash && stream.mpdUrl.isNotEmpty()) {
-            val mediaItem = ExoMediaItem.Builder()
-                .setUri(stream.mpdUrl)
-                .setMimeType(MimeTypes.APPLICATION_MPD)
-                .build()
-            DashMediaSource.Factory(cacheDataSourceFactory).createMediaSource(mediaItem)
-        } else {
-            val directUri = stream.directUrl.ifEmpty { stream.mpdUrl }
-            val mediaItem = ExoMediaItem.fromUri(directUri)
-            ProgressiveMediaSource.Factory(cacheDataSourceFactory).createMediaSource(mediaItem)
+        if (currentLoadedUri != streamTarget) {
+            currentLoadedUri = streamTarget
+            val mediaSource = if (stream.isDash && stream.mpdUrl.isNotEmpty()) {
+                val mediaItem = ExoMediaItem.Builder()
+                    .setUri(stream.mpdUrl)
+                    .setMimeType(MimeTypes.APPLICATION_MPD)
+                    .build()
+                DashMediaSource.Factory(cacheDataSourceFactory).createMediaSource(mediaItem)
+            } else {
+                val directUri = stream.directUrl.ifEmpty { stream.mpdUrl }
+                val mediaItem = ExoMediaItem.fromUri(directUri)
+                ProgressiveMediaSource.Factory(cacheDataSourceFactory).createMediaSource(mediaItem)
+            }
+
+            exoPlayer.setMediaSource(mediaSource)
+            exoPlayer.prepare()
+
+            if (readyState.resumePositionMs > 0L) {
+                exoPlayer.seekTo(readyState.resumePositionMs)
+            }
+            exoPlayer.play()
         }
 
-        exoPlayer.setMediaSource(mediaSource)
-        exoPlayer.prepare()
-
-        if (readyState.resumePositionMs > 0L) {
-            exoPlayer.seekTo(readyState.resumePositionMs)
-        }
-        exoPlayer.play()
+        applyVideoQuality(stream.resolution)
+        applyAudioLanguage(currentAudioTrack)
     }
 
     Box(
@@ -931,10 +1005,7 @@ fun PlayerScreen(
                                                     currentAudioTrack = label
                                                     viewModel.setAudioTrack(label)
                                                     isAudioSheetVisible = false
-                                                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                                                        .buildUpon()
-                                                        .setPreferredAudioLanguage(code.ifEmpty { null })
-                                                        .build()
+                                                    applyAudioLanguage(label)
                                                 }
                                                 .testTag("audio_track_$label")
                                         ) {
@@ -1010,6 +1081,7 @@ fun PlayerScreen(
                                             .clickable {
                                                 isQualitySheetVisible = false
                                                 viewModel.switchStream(streamOption, exoPlayer.currentPosition)
+                                                applyVideoQuality(streamOption.resolution)
                                             }
                                             .padding(horizontal = 4.dp, vertical = 2.dp)
                                     ) {
