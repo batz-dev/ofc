@@ -23,9 +23,18 @@ object ImageHelper {
         // Unsplash CDN compression
         if (trimmed.contains("images.unsplash.com")) {
             val base = trimmed.substringBefore("?")
-            val targetWidth = if (isBackdrop) 800 else 400
-            val quality = if (isBackdrop) 75 else 70
+            val targetWidth = if (isBackdrop) 720 else 360
+            val quality = if (isBackdrop) 70 else 65
             return "$base?w=$targetWidth&q=$quality&auto=format&fit=crop"
+        }
+
+        // Aoneroom / Inmoviebox OSS image compression
+        if (trimmed.contains("inmoviebox.com") || trimmed.contains("aoneroom.com")) {
+            if (!trimmed.contains("x-oss-process")) {
+                val separator = if (trimmed.contains("?")) "&" else "?"
+                val width = if (isBackdrop) 720 else 360
+                return "$trimmed${separator}x-oss-process=image/resize,w_$width/format,webp/quality,q_75"
+            }
         }
 
         return trimmed

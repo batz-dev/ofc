@@ -32,13 +32,13 @@ class MainActivity : ComponentActivity() {
         val imageLoader = ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.25)
+                    .maxSizePercent(0.30)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("movie_images_cache"))
-                    .maxSizeBytes(120L * 1024 * 1024) // 120 MB disk cache
+                    .maxSizeBytes(250L * 1024 * 1024) // 250 MB high-capacity disk cache
                     .build()
             }
             .respectCacheHeaders(false)

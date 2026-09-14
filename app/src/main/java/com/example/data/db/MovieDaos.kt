@@ -56,6 +56,12 @@ interface DownloadDao {
     @Query("UPDATE downloads SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: String, status: Int)
 
+    @Query("SELECT * FROM downloads WHERE status = 0 ORDER BY createdAt ASC LIMIT 1")
+    suspend fun getNextQueuedDownload(): DownloadEntity?
+
+    @Query("SELECT COUNT(*) FROM downloads WHERE status = 1")
+    suspend fun getActiveDownloadingCount(): Int
+
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun deleteDownload(id: String)
 

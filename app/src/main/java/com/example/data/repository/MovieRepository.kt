@@ -150,12 +150,19 @@ class MovieRepository(
         durationMs: Long
     ) {
         val id = "${subjectId}_${se}_${ep}"
+        val resolvedCover = if (coverUrl.isNotBlank()) coverUrl
+            else mediaItemCache[subjectId]?.coverUrl
+            ?: mediaDetailCache[subjectId]?.backdropUrl
+            ?: mediaDetailCache[subjectId]?.coverUrl
+            ?: CatalogData.builtInMediaList.find { it.id == subjectId }?.coverUrl
+            ?: ""
+
         watchHistoryDao.insertHistory(
             WatchHistoryEntity(
                 id = id,
                 subjectId = subjectId,
                 title = title,
-                coverUrl = coverUrl,
+                coverUrl = resolvedCover,
                 se = se,
                 ep = ep,
                 episodeTitle = episodeTitle,

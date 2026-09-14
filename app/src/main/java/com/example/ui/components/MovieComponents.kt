@@ -193,6 +193,10 @@ fun ContinueWatchingCard(
             .testTag("continue_card_${item.id}")
             .clickable { onClick() }
     ) {
+        val effectiveCover = item.coverUrl.ifEmpty {
+            CatalogData.builtInMediaList.find { it.id == item.subjectId }?.coverUrl ?: ""
+        }
+
         Box(
             modifier = Modifier
                 .width(220.dp)
@@ -205,7 +209,7 @@ fun ContinueWatchingCard(
                 )
         ) {
             AsyncImage(
-                model = ImageHelper.getCompressedUrl(item.coverUrl, isBackdrop = true),
+                model = ImageHelper.getCompressedUrl(effectiveCover, isBackdrop = true),
                 contentDescription = "${item.title} preview",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

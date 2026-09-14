@@ -280,11 +280,15 @@ class PlayerViewModel(
 
     fun saveProgress(positionMs: Long, durationMs: Long, coverUrl: String = "") {
         if (durationMs <= 0) return
+        val resolvedCover = if (coverUrl.isNotBlank()) coverUrl
+            else repository.mediaItemCache[subjectId]?.coverUrl
+            ?: repository.mediaDetailCache[subjectId]?.coverUrl
+            ?: ""
         viewModelScope.launch {
             repository.saveWatchProgress(
                 subjectId = subjectId,
                 title = title,
-                coverUrl = coverUrl,
+                coverUrl = resolvedCover,
                 se = se,
                 ep = ep,
                 episodeTitle = episodeTitle,
@@ -368,13 +372,14 @@ fun PlayerScreen(
 
     // Configure audio track language on ExoPlayer
     fun applyAudioLanguage(trackName: String) {
+        val lower = trackName.lowercase()
         val langCodes = when {
-            trackName.contains("hindi", ignoreCase = true) || trackName.contains("हिन्दी") -> listOf("hi", "hin", "hindi")
-            trackName.contains("spanish", ignoreCase = true) || trackName.contains("español", ignoreCase = true) -> listOf("es", "spa", "spanish")
-            trackName.contains("french", ignoreCase = true) || trackName.contains("français", ignoreCase = true) -> listOf("fr", "fra", "fre", "french")
-            trackName.contains("german", ignoreCase = true) || trackName.contains("deutsch", ignoreCase = true) -> listOf("de", "deu", "ger", "german")
-            trackName.contains("japanese", ignoreCase = true) || trackName.contains("日本語", ignoreCase = true) -> listOf("ja", "jpn", "japanese")
-            trackName.contains("english", ignoreCase = true) -> listOf("en", "eng", "english")
+            lower.contains("hindi") || lower.contains("हिन्दी") -> listOf("hi", "hin", "hindi")
+            lower.contains("spanish") || lower.contains("español") -> listOf("es", "spa", "spanish")
+            lower.contains("french") || lower.contains("français") -> listOf("fr", "fra", "fre", "french")
+            lower.contains("german") || lower.contains("deutsch") -> listOf("de", "deu", "ger", "german")
+            lower.contains("japanese") || lower.contains("日本語") -> listOf("ja", "jpn", "japanese")
+            lower.contains("english") -> listOf("en", "eng", "english")
             else -> emptyList()
         }
         val builder = exoPlayer.trackSelectionParameters.buildUpon()
@@ -382,25 +387,33 @@ fun PlayerScreen(
 
         if (langCodes.isNotEmpty()) {
             builder.setPreferredAudioLanguages(*langCodes.toTypedArray())
-        } else {
-            builder.setPreferredAudioLanguages()
         }
 
+        var matched = false
         for (group in exoPlayer.currentTracks.groups) {
             if (group.type == C.TRACK_TYPE_AUDIO) {
                 for (i in 0 until group.length) {
                     val format = group.getTrackFormat(i)
                     val lang = (format.language ?: "").lowercase()
                     val label = (format.label ?: "").lowercase()
-                    val matches = langCodes.any { code ->
-                        lang == code || lang.startsWith(code) || label.contains(code)
+                    val isMatch = if (langCodes.isNotEmpty()) {
+                        langCodes.any { code ->
+                            lang == code || lang.startsWith(code) || label.contains(code) || label.contains(lower)
+                        }
+                    } else {
+                        label.contains(lower) || lang.contains(lower)
                     }
-                    if (matches) {
+                    if (isMatch) {
                         builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i))
+                        matched = true
                         break
                     }
                 }
+                if (matched) break
             }
+        }
+        if (!matched && langCodes.isNotEmpty()) {
+            builder.clearOverridesOfType(C.TRACK_TYPE_AUDIO)
         }
         exoPlayer.trackSelectionParameters = builder.build()
     }

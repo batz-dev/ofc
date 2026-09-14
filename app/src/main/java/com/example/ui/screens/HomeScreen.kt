@@ -63,6 +63,8 @@ class HomeViewModel(private val repository: MovieRepository) : ViewModel() {
 
     val isDataSaver: StateFlow<Boolean> = repository.isDataSaverEnabled
 
+    private val tabFeedCache = java.util.concurrent.ConcurrentHashMap<Int, HomeData>()
+
     init {
         loadFeed(0)
     }
@@ -74,21 +76,43 @@ class HomeViewModel(private val repository: MovieRepository) : ViewModel() {
     fun selectTab(tabId: Int) {
         if (_selectedTab.value == tabId) return
         _selectedTab.value = tabId
-        loadFeed(tabId)
+
+        val cached = tabFeedCache[tabId]
+        if (cached != null) {
+            _uiState.value = HomeUiState.Success(cached)
+        } else {
+            loadFeed(tabId)
+        }
     }
 
     fun loadFeed(tabId: Int, forceRefresh: Boolean = false) {
         viewModelScope.launch {
-            _uiState.value = HomeUiState.Loading
+            val cached = tabFeedCache[tabId]
+            if (cached != null && !forceRefresh) {
+                _uiState.value = HomeUiState.Success(cached)
+                return@launch
+            }
+
+            if (cached == null) {
+                _uiState.value = HomeUiState.Loading
+            }
+
             try {
                 val data = repository.getHomeFeed(tabId, forceRefresh = forceRefresh)
                 if (data.sections.isNotEmpty() || data.banners.isNotEmpty()) {
+                    tabFeedCache[tabId] = data
                     _uiState.value = HomeUiState.Success(data)
+                } else if (cached != null) {
+                    _uiState.value = HomeUiState.Success(cached)
                 } else {
                     _uiState.value = HomeUiState.Error("Unable to fetch catalog. Please verify connection.")
                 }
             } catch (e: Exception) {
-                _uiState.value = HomeUiState.Error(e.localizedMessage ?: "Unknown error")
+                if (cached != null) {
+                    _uiState.value = HomeUiState.Success(cached)
+                } else {
+                    _uiState.value = HomeUiState.Error(e.localizedMessage ?: "Unknown error")
+                }
             }
         }
     }

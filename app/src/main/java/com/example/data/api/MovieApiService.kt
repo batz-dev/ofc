@@ -166,10 +166,32 @@ class MovieApiService {
                 for (b in 0 until bannerArr.length()) {
                     val bObj = bannerArr.optJSONObject(b) ?: continue
                     val imgObj = bObj.optJSONObject("image")
-                    val imgUrl = imgObj?.optString("url") ?: ""
-                    val bTitle = bObj.optString("title").ifEmpty { title }
+                    val imgUrl = imgObj?.optString("url") ?: bObj.optString("imageUrl")
+                    val subjectObj = bObj.optJSONObject("subject")
                     val sid = bObj.optString("subjectId")
-                    val sType = bObj.optInt("subjectType", 1)
+                        .ifEmpty { bObj.optString("id") }
+                        .ifEmpty { subjectObj?.optString("subjectId") ?: "" }
+                        .ifEmpty { subjectObj?.optString("id") ?: "" }
+
+                    val bTitle = bObj.optString("title")
+                        .ifEmpty { subjectObj?.optString("title") ?: "" }
+                        .ifEmpty { bObj.optString("subjectName") }
+                        .ifEmpty { bObj.optString("name") }
+                        .ifEmpty { subjectObj?.optString("name") ?: "" }
+                        .ifEmpty {
+                            if (!title.equals("BANNER", ignoreCase = true) && title.isNotEmpty()) title else ""
+                        }
+                        .ifEmpty {
+                            if (sid.isNotEmpty()) {
+                                sid.replace("sub_", "").replace("_", " ")
+                                    .split(" ")
+                                    .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
+                            } else "Featured Premiere"
+                        }
+
+                    val sType = if (bObj.has("subjectType")) bObj.optInt("subjectType")
+                        else subjectObj?.optInt("subjectType") ?: 1
+
                     if (imgUrl.isNotEmpty()) {
                         banners.add(
                             BannerItem(

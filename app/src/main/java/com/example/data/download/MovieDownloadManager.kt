@@ -89,6 +89,11 @@ class MovieDownloadManager(
 
         val isSeries = (se > 0 || ep > 0)
         val initialTotal = if (knownSizeBytes > 0L) knownSizeBytes else DownloadStorageHelper.getEstimatedSizeBytes(quality, isSeries = isSeries)
+
+        // Only start actively if no other download is currently running (1-by-1 sequential download)
+        val isBusy = activeJobs.isNotEmpty() || activeDashDownloaders.isNotEmpty()
+        val initialStatus = if (!isBusy) DownloadStatus.DOWNLOADING else DownloadStatus.QUEUED
+
         val entity = DownloadEntity(
             id = id,
             subjectId = subjectId,
@@ -105,16 +110,19 @@ class MovieDownloadManager(
             progress = 0,
             totalBytes = initialTotal,
             downloadedBytes = 0L,
-            status = DownloadStatus.DOWNLOADING,
+            status = initialStatus,
             errorMessage = "",
             createdAt = System.currentTimeMillis()
         )
 
         downloadDao.insertOrUpdate(entity)
-        startDownloadJob(context, entity, destinationFile, signCookie)
+
+        if (initialStatus == DownloadStatus.DOWNLOADING) {
+            startDownloadJob(context.applicationContext, entity, destinationFile, signCookie)
+        }
     }
 
-    fun pauseDownload(id: String) {
+    fun pauseDownload(id: String, context: Context? = null) {
         activeDashDownloaders[id]?.cancel()
         activeDashDownloaders.remove(id)
         activeJobs[id]?.cancel()
@@ -122,6 +130,7 @@ class MovieDownloadManager(
         _downloadSpeeds.value = _downloadSpeeds.value - id
         downloadScope.launch {
             downloadDao.updateStatus(id, DownloadStatus.PAUSED)
+            context?.let { processNextQueuedDownload(it) }
         }
     }
 
@@ -129,11 +138,18 @@ class MovieDownloadManager(
         val entity = downloadDao.getDownload(id) ?: return
         val destinationFile = File(entity.filePath)
         val cookie = if (signCookie.isNotEmpty()) signCookie else entity.signCookie
-        downloadDao.updateStatus(id, DownloadStatus.DOWNLOADING)
-        startDownloadJob(context, entity, destinationFile, cookie)
+
+        // If another download is active, set to QUEUED, otherwise start downloading
+        val isBusy = activeJobs.isNotEmpty() || activeDashDownloaders.isNotEmpty()
+        if (isBusy) {
+            downloadDao.updateStatus(id, DownloadStatus.QUEUED)
+        } else {
+            downloadDao.updateStatus(id, DownloadStatus.DOWNLOADING)
+            startDownloadJob(context.applicationContext, entity, destinationFile, cookie)
+        }
     }
 
-    suspend fun cancelAndDeleteDownload(id: String) {
+    suspend fun cancelAndDeleteDownload(id: String, context: Context? = null) {
         val downloader = activeDashDownloaders.remove(id)
         downloader?.cancel()
         activeJobs[id]?.cancel()
@@ -153,6 +169,19 @@ class MovieDownloadManager(
                 file.delete()
             }
             downloadDao.deleteDownload(id)
+        }
+        context?.let { processNextQueuedDownload(it) }
+    }
+
+    fun processNextQueuedDownload(context: Context) {
+        downloadScope.launch {
+            if (activeJobs.isNotEmpty() || activeDashDownloaders.isNotEmpty()) {
+                return@launch
+            }
+            val next = downloadDao.getNextQueuedDownload() ?: return@launch
+            downloadDao.updateStatus(next.id, DownloadStatus.DOWNLOADING)
+            val destinationFile = File(next.filePath)
+            startDownloadJob(context.applicationContext, next, destinationFile, next.signCookie)
         }
     }
 
@@ -221,9 +250,11 @@ class MovieDownloadManager(
             } finally {
                 activeJobs.remove(entity.id)
                 activeDashDownloaders.remove(entity.id)
-                if (activeJobs.isEmpty()) {
+                _downloadSpeeds.value = _downloadSpeeds.value - entity.id
+                if (activeJobs.isEmpty() && activeDashDownloaders.isEmpty()) {
                     DownloadForegroundService.stop(context)
                 }
+                processNextQueuedDownload(context)
             }
         }
 

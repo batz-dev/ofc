@@ -96,6 +96,7 @@ fun DownloadOptionsDialog(
         mutableStateOf(qualityOptions.firstOrNull()?.first ?: "1080p")
     }
     var selectedAudio by remember(initialAudio) { mutableStateOf(initialAudio) }
+    var activeSeasonTab by remember(initialSeason) { mutableIntStateOf(initialSeason) }
 
     fun getQualitySizeBytes(res: String): Long {
         val resInt = res.replace("p", "", ignoreCase = true).replace("k", "000", ignoreCase = true).toIntOrNull() ?: 1080
@@ -359,7 +360,7 @@ fun DownloadOptionsDialog(
                 }
             }
 
-            // Section 3: For TV Series, Select How Many Episodes
+            // Section 3: For TV Series, Select Season & Episodes
             if (isSeries) {
                 Spacer(modifier = Modifier.height(18.dp))
 
@@ -377,7 +378,7 @@ fun DownloadOptionsDialog(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "How Many Episodes?",
+                            text = "Select Season & Episodes",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.SemiBold
@@ -392,19 +393,65 @@ fun DownloadOptionsDialog(
                     )
                 }
 
+                // Season Selector Pills if multiple seasons exist
+                if (seasons.size > 1) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(seasons) { season ->
+                            val isSeasonSelected = season.seasonNumber == activeSeasonTab
+                            FilterChip(
+                                selected = isSeasonSelected,
+                                onClick = { activeSeasonTab = season.seasonNumber },
+                                label = { Text("Season ${season.seasonNumber}") },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            )
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Quick presets
+                val displayedEpisodes = if (seasons.isNotEmpty()) {
+                    allEpisodes.filter { it.se == activeSeasonTab }
+                } else {
+                    allEpisodes
+                }
+
+                // Quick presets (Season-scoped and All)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf(
-                        "First 1" to 1,
-                        "First 3" to 3,
-                        "First 5" to 5,
-                        "All (${allEpisodes.size})" to allEpisodes.size
-                    ).forEach { (label, count) ->
+                        "All S$activeSeasonTab (${displayedEpisodes.size})" to {
+                            displayedEpisodes.forEach { ep ->
+                                val key = "${ep.se}_${ep.ep}"
+                                if (!selectedEpisodeSet.contains(key)) selectedEpisodeSet.add(key)
+                            }
+                        },
+                        "First 3" to {
+                            displayedEpisodes.take(3).forEach { ep ->
+                                val key = "${ep.se}_${ep.ep}"
+                                if (!selectedEpisodeSet.contains(key)) selectedEpisodeSet.add(key)
+                            }
+                        },
+                        "All Series (${allEpisodes.size})" to {
+                            allEpisodes.forEach { ep ->
+                                val key = "${ep.se}_${ep.ep}"
+                                if (!selectedEpisodeSet.contains(key)) selectedEpisodeSet.add(key)
+                            }
+                        },
+                        "Clear" to {
+                            selectedEpisodeSet.clear()
+                        }
+                    ).forEach { (label, action) ->
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = MaterialTheme.colorScheme.surfaceContainer,
@@ -412,12 +459,7 @@ fun DownloadOptionsDialog(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    selectedEpisodeSet.clear()
-                                    allEpisodes.take(count).forEach { ep ->
-                                        selectedEpisodeSet.add("${ep.se}_${ep.ep}")
-                                    }
-                                }
+                                .clickable { action() }
                         ) {
                             Text(
                                 text = label,
@@ -433,14 +475,14 @@ fun DownloadOptionsDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Scrollable episode list checkboxes
+                // Scrollable episode list checkboxes for active season
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 160.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    items(allEpisodes, key = { "${it.se}_${it.ep}" }) { epItem ->
+                    items(displayedEpisodes, key = { "${it.se}_${it.ep}" }) { epItem ->
                         val epKey = "${epItem.se}_${epItem.ep}"
                         val isChecked = selectedEpisodeSet.contains(epKey)
 
