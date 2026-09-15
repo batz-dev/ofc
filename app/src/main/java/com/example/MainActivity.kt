@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
         Coil.setImageLoader(imageLoader)
 
         val database = MovieDatabase.getDatabase(this)
-        val apiService = MovieApiService()
+        val apiService = MovieApiService(applicationContext)
         val repository = MovieRepository(
             apiService = apiService,
             watchHistoryDao = database.watchHistoryDao(),

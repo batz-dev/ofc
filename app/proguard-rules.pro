@@ -1,21 +1,27 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Room
+-keep class * extends androidx.room.RoomDatabase
+-dontwarn androidx.room.paging.**
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Moshi
+-keepclassmembers class * {
+    @com.squareup.moshi.Json <fields>;
+}
+-keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod
+-dontwarn sun.misc.**
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Retrofit / OkHttp
+-dontwarn javax.annotation.**
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-keepattributes Signature
+-keepattributes Exceptions
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Data models & API responses
+-keep class com.example.data.api.model.** { *; }
+-keep class com.example.data.local.** { *; }
+
+# Security Key Store and Dynamic Signer
+-keep class com.example.data.api.security.** { *; }
+-keepclassmembers class com.example.data.api.security.SecureKeyStore { *; }
+-keepclassmembers class com.example.data.api.security.DeviceSecurityHelper { *; }
+

@@ -1,7 +1,9 @@
 package com.example.data.api
 
+import android.content.Context
 import android.util.Base64
 import android.util.Log
+import com.example.data.api.security.SecureKeyStore
 import com.example.data.download.DownloadStorageHelper
 import com.example.data.model.*
 import kotlinx.coroutines.Dispatchers
@@ -18,7 +20,7 @@ import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
-class MovieApiService {
+class MovieApiService(private val context: Context? = null) {
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -40,9 +42,9 @@ class MovieApiService {
 
             // Bootstrap token from tab-operating
             for (base in listOf(MovieSigner.PRIMARY_BASE_URL) + MovieSigner.FALLBACK_URLS) {
-                val url = "$base/wefeed-mobile-bff/tab-operating?page=1&tabId=0&version="
+                val url = "$base${SecureKeyStore.PATH_TAB_OPERATING}?page=1&tabId=0&version="
                 try {
-                    val headers = MovieSigner.buildHeaders("GET", url)
+                    val headers = MovieSigner.buildHeaders("GET", url, context = context)
                     val reqBuilder = Request.Builder().url(url).get()
                     headers.forEach { (k, v) -> reqBuilder.addHeader(k, v) }
 
@@ -50,7 +52,7 @@ class MovieApiService {
                         client.newCall(reqBuilder.build()).execute()
                     }
 
-                    val xUser = response.header("x-user") ?: response.header("X-User")
+                    val xUser = response.header(SecureKeyStore.HDR_X_USER) ?: response.header("X-User")
                     response.close()
 
                     if (!xUser.isNullOrEmpty()) {
@@ -87,7 +89,7 @@ class MovieApiService {
             val fullUrl = if (!queryString.isNullOrEmpty()) "$host$path?$queryString" else "$host$path"
             try {
                 val contentTypeStr = "application/json"
-                var headers = MovieSigner.buildHeaders(method, fullUrl, bodyJson, token, contentType = contentTypeStr)
+                var headers = MovieSigner.buildHeaders(method, fullUrl, bodyJson, token, contentType = contentTypeStr, context = context)
                 var reqBuilder = Request.Builder().url(fullUrl)
                 headers.forEach { (k, v) -> reqBuilder.header(k, v) }
 
@@ -107,7 +109,7 @@ class MovieApiService {
                 if (response.code == 401 || response.code == 407 || response.code == 441) {
                     response.close()
                     token = getOrRefreshToken(forceRefresh = true)
-                    headers = MovieSigner.buildHeaders(method, fullUrl, bodyJson, token, contentType = contentTypeStr)
+                    headers = MovieSigner.buildHeaders(method, fullUrl, bodyJson, token, contentType = contentTypeStr, context = context)
                     reqBuilder = Request.Builder().url(fullUrl)
                     headers.forEach { (k, v) -> reqBuilder.header(k, v) }
                     if (method.equals("POST", ignoreCase = true)) {
@@ -142,7 +144,7 @@ class MovieApiService {
     suspend fun getHomeFeed(tabId: Int = 0): HomeData {
         val root = executeSignedRequest(
             method = "GET",
-            path = "/wefeed-mobile-bff/tab-operating",
+            path = SecureKeyStore.PATH_TAB_OPERATING,
             queryParams = mapOf("page" to "1", "tabId" to tabId.toString(), "version" to "")
         ) ?: return HomeData(emptyList(), emptyList())
 
@@ -268,14 +270,14 @@ class MovieApiService {
             }
         }
 
-        // 1. Try POST /wefeed-mobile-bff/subject-api/search
+        // 1. Try POST search
         var root = executeSignedRequest(
             method = "POST",
-            path = "/wefeed-mobile-bff/subject-api/search",
+            path = SecureKeyStore.PATH_SEARCH,
             bodyJson = bodyObj.toString()
         )
 
-        // 2. Fallback to GET /wefeed-mobile-bff/subject-api/search
+        // 2. Fallback to GET search
         if (root == null) {
             val qParams = mutableMapOf(
                 "keyword" to keyword,
@@ -287,7 +289,7 @@ class MovieApiService {
             }
             root = executeSignedRequest(
                 method = "GET",
-                path = "/wefeed-mobile-bff/subject-api/search",
+                path = SecureKeyStore.PATH_SEARCH,
                 queryParams = qParams
             )
         }
@@ -411,7 +413,7 @@ class MovieApiService {
         if (keyword.isEmpty()) return emptyList()
         val root = executeSignedRequest(
             method = "GET",
-            path = "/wefeed-mobile-bff/subject-api/search-suggest",
+            path = SecureKeyStore.PATH_SEARCH_SUGGEST,
             queryParams = mapOf("keyword" to keyword, "perPage" to "8")
         ) ?: return emptyList()
 
@@ -444,11 +446,11 @@ class MovieApiService {
     suspend fun getSubjectDetail(subjectId: String): MediaDetail? {
         val root = executeSignedRequest(
             method = "GET",
-            path = "/wefeed-mobile-bff/subject-api/get",
-            queryParams = mapOf("subjectId" to subjectId, "host" to "api.inmoviebox.com")
+            path = SecureKeyStore.PATH_SUBJECT_DETAIL,
+            queryParams = mapOf("subjectId" to subjectId)
         ) ?: executeSignedRequest(
             method = "GET",
-            path = "/wefeed-mobile-bff/subject-api/get",
+            path = SecureKeyStore.PATH_SUBJECT_GET,
             queryParams = mapOf("subjectId" to subjectId)
         ) ?: return null
 
@@ -505,7 +507,7 @@ class MovieApiService {
     suspend fun getSeasonInfo(subjectId: String): List<SeasonInfo> {
         val root = executeSignedRequest(
             method = "GET",
-            path = "/wefeed-mobile-bff/subject-api/season-info",
+            path = SecureKeyStore.PATH_SEASON_INFO,
             queryParams = mapOf("subjectId" to subjectId)
         ) ?: return emptyList()
 
@@ -561,9 +563,10 @@ class MovieApiService {
     }
 
     private fun extractBaseDashUrl(cookie: String): String? {
-        if (!cookie.contains("CloudFront-Policy=")) return null
+        val policyKey = SecureKeyStore.CLOUDFRONT_POLICY_KEY
+        if (!cookie.contains(policyKey)) return null
         try {
-            val policyPart = cookie.substringAfter("CloudFront-Policy=").substringBefore(";")
+            val policyPart = cookie.substringAfter(policyKey).substringBefore(";")
             val paddedPolicy = policyPart + "=".repeat((-policyPart.length % 4 + 4) % 4)
             val decoded = Base64.decode(paddedPolicy, Base64.URL_SAFE)
             val jsonStr = String(decoded, Charsets.UTF_8)
@@ -572,7 +575,7 @@ class MovieApiService {
             val resourcePattern = obj.getJSONArray("Statement").getJSONObject(0).getString("Resource")
             return resourcePattern.replace("/*", "")
         } catch (e: Exception) {
-            val matcher = Pattern.compile("(https://[^\\s\"';]+)/\\*").matcher(cookie)
+            val matcher = Pattern.compile("(https://[^\\s\"\x27;]+)/\\*").matcher(cookie)
             if (matcher.find()) {
                 return matcher.group(1)
             }
@@ -630,7 +633,7 @@ class MovieApiService {
     suspend fun getPlayInfo(subjectId: String, se: Int = 0, ep: Int = 0): List<StreamOption> {
         val root = executeSignedRequest(
             method = "GET",
-            path = "/wefeed-mobile-bff/subject-api/play-info",
+            path = SecureKeyStore.PATH_PLAY_INFO,
             queryParams = mapOf(
                 "subjectId" to subjectId,
                 "se" to se.toString(),
@@ -651,7 +654,7 @@ class MovieApiService {
             val duration = s.optInt("duration", 0)
             val codec = s.optString("codecName", "hevc")
 
-            if (cookie.isNotEmpty() && cookie.contains("CloudFront-Policy=")) {
+            if (cookie.isNotEmpty() && cookie.contains(SecureKeyStore.CLOUDFRONT_POLICY_KEY)) {
                 val baseDashUrl = extractBaseDashUrl(cookie)
                 if (baseDashUrl != null) {
                     val mpdUrl = "$baseDashUrl/index.mpd"
@@ -683,7 +686,7 @@ class MovieApiService {
             } else {
                 val url = s.optString("url")
                 // Exclude dummy "update app" video
-                if (url.isNotEmpty() && !url.contains("9a0461bc39da389663bf3dbb17091d3f") && !url.contains("/other/2026/09/01/")) {
+                if (url.isNotEmpty() && !url.contains(SecureKeyStore.DUMMY_VIDEO_MD5) && !url.contains(SecureKeyStore.DUMMY_VIDEO_PATH)) {
                     val resList = resolutionsStr.split(",").mapNotNull { it.trim().toIntOrNull() }
                     val finalResolutions = if (resList.isNotEmpty()) resList else listOf(s.optInt("resolution", 720))
                     for (res in finalResolutions) {
@@ -721,7 +724,7 @@ class MovieApiService {
         }
         val root = executeSignedRequest(
             method = "POST",
-            path = "/wefeed-mobile-bff/subject-api/play-related-rec",
+            path = SecureKeyStore.PATH_PLAY_RELATED_REC,
             bodyJson = bodyObj.toString()
         ) ?: return emptyList()
 

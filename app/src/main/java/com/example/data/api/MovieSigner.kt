@@ -1,49 +1,20 @@
 package com.example.data.api
 
-import android.net.Uri
+import android.content.Context
 import android.util.Base64
+import com.example.data.api.security.DeviceSecurityHelper
+import com.example.data.api.security.SecureKeyStore
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.security.MessageDigest
-import java.util.UUID
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
-import org.json.JSONObject
 
 object MovieSigner {
-    const val PRIMARY_BASE_URL = "https://api6.aoneroom.com"
-    val FALLBACK_URLS = listOf("https://api5.aoneroom.com", "https://api4.aoneroom.com")
+    val PRIMARY_BASE_URL: String get() = SecureKeyStore.PRIMARY_BASE_URL
+    val FALLBACK_URLS: List<String> get() = listOf(SecureKeyStore.FALLBACK_URL_1, SecureKeyStore.FALLBACK_URL_2)
 
-    private const val SECRET_KEY_DEFAULT = "76iRl07s0xSN9jqmEWAt79EBJZulIQIsV64FZr2O"
-    const val VERSION_CODE = 50020045
-
-    val ANDROID_USER_AGENT =
-        "com.community.oneroom/$VERSION_CODE (Linux; U; Android 13; en_US; 22101316G; Build/TQ2A.230405.003; Cronet/135.0.7012.3)"
-
-    private val deviceId = UUID.randomUUID().toString().replace("-", "")
-    private val gaid = UUID.randomUUID().toString()
-
-    val clientInfoJson: String by lazy {
-        JSONObject().apply {
-            put("package_name", "com.community.oneroom")
-            put("version_name", "3.0.03.0529.03")
-            put("version_code", VERSION_CODE)
-            put("os", "android")
-            put("os_version", "13")
-            put("install_ch", "ps")
-            put("device_id", deviceId)
-            put("install_store", "ps")
-            put("gaid", gaid)
-            put("brand", "Redmi")
-            put("model", "22101316G")
-            put("system_language", "en")
-            put("net", "NETWORK_WIFI")
-            put("region", "US")
-            put("timezone", "America/New_York")
-            put("sp_code", "40401")
-            put("X-Play-Mode", "2")
-        }.toString()
-    }
+    private val SECRET_KEY_DEFAULT: String get() = SecureKeyStore.DEFAULT_SECRET_KEY
 
     fun md5Hex(data: ByteArray): String {
         val digest = MessageDigest.getInstance("MD5").digest(data)
@@ -136,25 +107,26 @@ object MovieSigner {
         fullUrl: String,
         body: String? = null,
         authToken: String? = null,
-        contentType: String = "application/json"
+        contentType: String = "application/json",
+        context: Context? = null
     ): Map<String, String> {
         val ts = System.currentTimeMillis()
         val accept = "application/json"
 
         val headers = mutableMapOf(
-            "User-Agent" to ANDROID_USER_AGENT,
-            "Accept" to accept,
-            "Content-Type" to contentType,
-            "Connection" to "keep-alive",
-            "X-Client-Token" to generateXClientToken(ts),
-            "x-tr-signature" to generateXTrSignature(method, accept, contentType, fullUrl, body, ts),
-            "X-Client-Info" to clientInfoJson,
-            "X-Client-Status" to "0",
-            "X-Play-Mode" to "2"
+            SecureKeyStore.HDR_USER_AGENT to DeviceSecurityHelper.getUserAgent(context),
+            SecureKeyStore.HDR_ACCEPT to accept,
+            SecureKeyStore.HDR_CONTENT_TYPE to contentType,
+            SecureKeyStore.HDR_CONNECTION to "keep-alive",
+            SecureKeyStore.HDR_CLIENT_TOKEN to generateXClientToken(ts),
+            SecureKeyStore.HDR_TR_SIGNATURE to generateXTrSignature(method, accept, contentType, fullUrl, body, ts),
+            SecureKeyStore.HDR_CLIENT_INFO to DeviceSecurityHelper.buildClientInfoJson(context),
+            SecureKeyStore.HDR_CLIENT_STATUS to "0",
+            SecureKeyStore.HDR_PLAY_MODE to "2"
         )
 
         if (!authToken.isNullOrEmpty()) {
-            headers["Authorization"] = "Bearer $authToken"
+            headers[SecureKeyStore.HDR_AUTHORIZATION] = "Bearer $authToken"
         }
 
         return headers
