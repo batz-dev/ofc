@@ -575,7 +575,7 @@ class MovieApiService(private val context: Context? = null) {
             val resourcePattern = obj.getJSONArray("Statement").getJSONObject(0).getString("Resource")
             return resourcePattern.replace("/*", "")
         } catch (e: Exception) {
-            val matcher = Pattern.compile("(https://[^\\s\"\x27;]+)/\\*").matcher(cookie)
+            val matcher = Pattern.compile("(https://[^\\s\"';]+)/\\*").matcher(cookie)
             if (matcher.find()) {
                 return matcher.group(1)
             }
