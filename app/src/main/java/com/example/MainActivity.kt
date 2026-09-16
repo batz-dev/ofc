@@ -1,6 +1,9 @@
 package com.example
 
+import android.os.Build
 import android.os.Bundle
+import android.view.Display
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,17 +31,20 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Enable highest supported display refresh rate (90Hz / 120Hz / 144Hz) by default for ultra-smooth UI
+        enableHighRefreshRate()
+
         // Configure high-efficiency image caching to drastically reduce data usage
         val imageLoader = ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.30)
+                    .maxSizePercent(0.35)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("movie_images_cache"))
-                    .maxSizeBytes(250L * 1024 * 1024) // 250 MB high-capacity disk cache
+                    .maxSizeBytes(300L * 1024 * 1024) // 300 MB high-capacity disk cache
                     .build()
             }
             .respectCacheHeaders(false)
@@ -75,4 +81,32 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * Automatically requests the highest supported refresh rate (90Hz, 120Hz, 144Hz)
+     * supported by the device screen for fluid, jank-free 120fps animations and scrolling.
+     */
+    private fun enableHighRefreshRate() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                val currentDisplay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    display
+                } else {
+                    @Suppress("DEPRECATION")
+                    windowManager.defaultDisplay
+                }
+
+                val modes = currentDisplay?.supportedModes
+                if (!modes.isNullOrEmpty()) {
+                    val highestMode = modes.maxByOrNull { it.refreshRate }
+                    if (highestMode != null && highestMode.refreshRate > 60f) {
+                        val lp = window.attributes
+                        lp.preferredDisplayModeId = highestMode.modeId
+                        window.attributes = lp
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
 }
+

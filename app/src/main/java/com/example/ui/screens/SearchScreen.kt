@@ -45,6 +45,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+import android.util.LruCache
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 sealed interface SearchUiState {
     object Idle : SearchUiState
     object Loading : SearchUiState
@@ -70,6 +74,10 @@ class SearchViewModel(
 
     val recentSearches: StateFlow<List<String>> = searchHistoryManager?.recentSearches ?: MutableStateFlow(emptyList())
 
+    // High-performance LRU memory caches for 0ms latency on repeated keystrokes & backspaces
+    private val searchCache = LruCache<String, List<MediaItem>>(150)
+    private val suggestCache = LruCache<String, List<String>>(150)
+
     private var searchJob: Job? = null
     private var suggestJob: Job? = null
     private var searchRequestId = 0L
@@ -89,24 +97,46 @@ class SearchViewModel(
             return
         }
 
-        // Fetch suggestions debounced (150ms)
-        suggestJob?.cancel()
-        suggestJob = viewModelScope.launch {
-            delay(150)
-            try {
-                val list = repository.getSuggestions(trimmed)
-                _suggestions.value = list
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+        val cacheKey = "${trimmed.lowercase()}_type_${_subjectType.value}"
+        val cachedResults = searchCache.get(cacheKey)
+
+        // 1. Instant 0ms response from memory cache or local catalog as user types
+        if (cachedResults != null && cachedResults.isNotEmpty()) {
+            _uiState.value = SearchUiState.Success(cachedResults)
+        } else {
+            // Show instant local catalog match immediately so UI is never laggy/blank while typing
+            val instantLocal = repository.searchLocalCatalog(trimmed, _subjectType.value)
+            if (instantLocal.isNotEmpty()) {
+                _uiState.value = SearchUiState.Success(instantLocal)
+            } else if (_uiState.value !is SearchUiState.Success) {
+                _uiState.value = SearchUiState.Loading
             }
         }
 
-        // Debounced search (350ms) to avoid intermediate flicker while typing
+        // 2. Fetch suggestions with instant cache lookup or snappy 100ms debounce
+        val cachedSuggestions = suggestCache.get(trimmed.lowercase())
+        if (cachedSuggestions != null) {
+            _suggestions.value = cachedSuggestions
+        } else {
+            suggestJob?.cancel()
+            suggestJob = viewModelScope.launch(Dispatchers.IO) {
+                delay(100)
+                try {
+                    val list = repository.getSuggestions(trimmed)
+                    suggestCache.put(trimmed.lowercase(), list)
+                    _suggestions.value = list
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
+            }
+        }
+
+        // 3. Ultra-snappy debounced network search (180ms)
         searchJob?.cancel()
         val currentId = ++searchRequestId
-        searchJob = viewModelScope.launch {
-            delay(350)
-            executeSearch(trimmed, _subjectType.value, currentId)
+        searchJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(180)
+            executeSearch(trimmed, _subjectType.value, currentId, cacheKey)
         }
     }
 
@@ -114,10 +144,21 @@ class SearchViewModel(
         _subjectType.value = type
         val trimmed = _query.value.trim()
         if (trimmed.isNotBlank()) {
+            val cacheKey = "${trimmed.lowercase()}_type_$type"
+            val cached = searchCache.get(cacheKey)
+            if (cached != null) {
+                _uiState.value = SearchUiState.Success(cached)
+            } else {
+                val instantLocal = repository.searchLocalCatalog(trimmed, type)
+                if (instantLocal.isNotEmpty()) {
+                    _uiState.value = SearchUiState.Success(instantLocal)
+                }
+            }
+
             searchJob?.cancel()
             val currentId = ++searchRequestId
-            searchJob = viewModelScope.launch {
-                executeSearch(trimmed, type, currentId)
+            searchJob = viewModelScope.launch(Dispatchers.IO) {
+                executeSearch(trimmed, type, currentId, cacheKey)
             }
         }
     }
@@ -129,20 +170,34 @@ class SearchViewModel(
         _suggestions.value = emptyList()
         searchHistoryManager?.addSearch(trimmed)
 
+        val cacheKey = "${trimmed.lowercase()}_type_${_subjectType.value}"
+        val cached = searchCache.get(cacheKey)
+        if (cached != null && cached.isNotEmpty()) {
+            _uiState.value = SearchUiState.Success(cached)
+        }
+
         searchJob?.cancel()
         val currentId = ++searchRequestId
-        searchJob = viewModelScope.launch {
-            executeSearch(trimmed, _subjectType.value, currentId)
+        searchJob = viewModelScope.launch(Dispatchers.IO) {
+            executeSearch(trimmed, _subjectType.value, currentId, cacheKey)
         }
     }
 
-    private suspend fun executeSearch(keyword: String, type: Int, reqId: Long) {
+    private suspend fun executeSearch(keyword: String, type: Int, reqId: Long, cacheKey: String) {
         if (reqId != searchRequestId) return
-        _uiState.value = SearchUiState.Loading
         try {
             val results = repository.search(keyword, page = 1, subjectType = type)
             if (reqId == searchRequestId) {
-                _uiState.value = SearchUiState.Success(results)
+                if (results.isNotEmpty()) {
+                    searchCache.put(cacheKey, results)
+                    _uiState.value = SearchUiState.Success(results)
+                } else {
+                    val fallbackResults = repository.searchLocalCatalog(keyword, type)
+                    if (fallbackResults.isNotEmpty()) {
+                        searchCache.put(cacheKey, fallbackResults)
+                    }
+                    _uiState.value = SearchUiState.Success(fallbackResults)
+                }
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e

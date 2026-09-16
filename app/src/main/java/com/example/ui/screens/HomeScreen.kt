@@ -453,7 +453,7 @@ fun HomeScreen(
                         }
 
                         // Dynamic Curated Sections
-                        items(data.sections) { section ->
+                        items(data.sections, key = { it.title }) { section ->
                             SectionItem(
                                 section = section,
                                 onMediaClick = onMediaClick
